@@ -7,13 +7,13 @@ public class TrapController : MonoBehaviour
     [Header("Trap Settings")]
     public float activeTime = 2f;    // How long the trap is active/deadly
     public float inactiveTime = 2f;  // How long the trap is inactive/safe
+
+    [Header("Materials")]
+    public Material lavaMaterial;     // Drag your lava material here (active/deadly)
+    public Material waterMaterial;    // Drag your water material here (inactive/safe)
     
     private Renderer trapRenderer;
     private Collider trapCollider;
-    
-    // Store original color to switch back
-    private Color activeColor = Color.red;
-    private Color inactiveColor = new Color(0.5f, 0.5f, 0.5f, 0.3f); // Semi-transparent gray
 
     void Start()
     {
@@ -36,13 +36,13 @@ public class TrapController : MonoBehaviour
         while (true) // Loop forever
         {
             // --- STATE: INACTIVE (SAFE) ---
-            if(trapRenderer != null) trapRenderer.material.color = inactiveColor;
+            if(trapRenderer != null) trapRenderer.material = waterMaterial;
             if(trapCollider != null) trapCollider.enabled = false; // Player can pass through safely
             
             yield return new WaitForSeconds(inactiveTime); // Wait
 
             // --- STATE: ACTIVE (DEADLY) ---
-            if(trapRenderer != null) trapRenderer.material.color = activeColor;
+            if(trapRenderer != null) trapRenderer.material = lavaMaterial;
             if(trapCollider != null) trapCollider.enabled = true; // Player will trigger death
             
             yield return new WaitForSeconds(activeTime); // Wait
