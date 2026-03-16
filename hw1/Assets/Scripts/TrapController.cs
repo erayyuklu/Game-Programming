@@ -7,17 +7,11 @@ public class TrapController : MonoBehaviour
     [Header("Trap Settings")]
     public float activeTime = 2f;    // How long the trap is active/deadly
     public float inactiveTime = 2f;  // How long the trap is inactive/safe
-
-    [Header("Materials")]
-    public Material lavaMaterial;     // Drag your lava material here (active/deadly)
-    public Material waterMaterial;    // Drag your water material here (inactive/safe)
     
-    private Renderer trapRenderer;
     private Collider trapCollider;
 
     void Start()
     {
-        trapRenderer = GetComponent<Renderer>();
         trapCollider = GetComponent<Collider>();
         
         // Ensure the collider is a trigger
@@ -36,16 +30,14 @@ public class TrapController : MonoBehaviour
         while (true) // Loop forever
         {
             // --- STATE: INACTIVE (SAFE) ---
-            if(trapRenderer != null) trapRenderer.material = waterMaterial;
-            if(trapCollider != null) trapCollider.enabled = false; // Player can pass through safely
+            if(trapCollider != null) trapCollider.enabled = false;
             
-            yield return new WaitForSeconds(inactiveTime); // Wait
+            yield return new WaitForSeconds(inactiveTime);
 
             // --- STATE: ACTIVE (DEADLY) ---
-            if(trapRenderer != null) trapRenderer.material = lavaMaterial;
-            if(trapCollider != null) trapCollider.enabled = true; // Player will trigger death
+            if(trapCollider != null) trapCollider.enabled = true;
             
-            yield return new WaitForSeconds(activeTime); // Wait
+            yield return new WaitForSeconds(activeTime);
         }
     }
 
@@ -55,16 +47,7 @@ public class TrapController : MonoBehaviour
         if (other.CompareTag("Player"))
         {
             Debug.Log("PLAYER DIED! Hit by a Trap.");
-            
-            // For now, when the player dies, we just reload the current scene (restart the game)
-            // We will improve this with a Game Over UI in the Bonus step.
-            RestartGame();
+            SceneManager.LoadScene(SceneManager.GetActiveScene().name);
         }
-    }
-
-    void RestartGame()
-    {
-        // Get the current active scene and load it again
-        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
     }
 }

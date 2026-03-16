@@ -3,21 +3,27 @@ using UnityEngine;
 public class DoorController : MonoBehaviour
 {
     private bool gameWon = false;
+    private DoorScript.Door doorScript;
 
-    // This function is called when another object's collider hits this object's collider
+    void Start()
+    {
+        // Find the asset's Door script (might be on this object or a child)
+        doorScript = GetComponentInChildren<DoorScript.Door>();
+    }
+
     private void OnCollisionEnter(Collision collision)
     {
-        // Check if the object we collided with has the tag "Key"
         if (collision.gameObject.CompareTag("Key") && !gameWon)
         {
             gameWon = true;
-            Debug.Log("YOU WIN! The key has reached the door.");
-            
-            // Optional: Destroy or disable the door to show it's "opened"
-            gameObject.SetActive(false);
-            
-            // Optional: Destroy the key as well (uncomment if you want)
-            // Destroy(collision.gameObject);
+            Debug.Log("Door opened! Enter the room to win.");
+
+            // Use the asset's built-in door open function
+            if (doorScript != null)
+            {
+                doorScript.OpenDoor();
+            }
         }
     }
 }
+
