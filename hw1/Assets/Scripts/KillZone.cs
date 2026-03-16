@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 public class KillZone : MonoBehaviour
 {
@@ -18,14 +17,11 @@ public class KillZone : MonoBehaviour
         }
     }
 
-    // No Update() - collider stays enabled all the time
-
     private void OnTriggerStay(Collider other)
     {
         if (other.CompareTag("Player") && spikeTrap != null && spikeTrap.isActive)
         {
-            Debug.Log("PLAYER DIED! Spike trap isActive=" + spikeTrap.isActive);
-            SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+            GameManager.LoseGame();
         }
     }
 }

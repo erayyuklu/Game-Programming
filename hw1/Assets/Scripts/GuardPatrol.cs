@@ -67,8 +67,7 @@ public class GuardPatrol : MonoBehaviour
 
         if (distance <= detectionRange)
         {
-            Debug.Log("PLAYER DIED! Caught by a Guard.");
-            SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+            GameManager.LoseGame();
         }
     }
 

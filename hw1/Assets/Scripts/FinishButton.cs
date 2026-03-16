@@ -16,9 +16,7 @@ public class FinishButton : MonoBehaviour
     {
         if (other.CompareTag("Player"))
         {
-            Debug.Log("YOU WIN! Player reached the finish zone.");
-            // We will add Game Over UI later in the bonus step
-            // For now, just log the win message
+            GameManager.WinGame();
         }
     }
 }
