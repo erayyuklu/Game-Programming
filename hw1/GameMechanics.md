@@ -65,7 +65,14 @@ A 3D third-person maze escape game. The player navigates through a maze to find 
 - **Play Again:** Calls `RestartGame()` to reload the current scene.
 - **Quit:** Calls `QuitGame()` to exit the application via `Application.Quit()`.
 
-## 11. Techniques Used
+## 11. Visual Polish
+
+- **Point Lights:** Placed near the key and door for atmospheric lighting.
+- **Fog:** Enabled environmental fog for depth and atmosphere.
+- **Ocean:** A large animated water plane surrounds the maze using `WaterAnimation.cs`, which scrolls the texture offset to simulate waves.
+- **Flags:** A blue flag marks the starting point; two red flags mark the finish zone.
+
+## 12. Techniques Used
 
 | Technique           | Where Used                                   |
 | ------------------- | -------------------------------------------- |
@@ -76,11 +83,13 @@ A 3D third-person maze escape game. The player navigates through a maze to find 
 | Unity Asset Store   | Character, Door, Spike Trap, Textures        |
 | UI Canvas           | Win/Lose Panels, Buttons                     |
 | AudioSource         | Background Music                             |
+| Texture Animation   | WaterAnimation (Ocean waves)                 |
 
-## 12. Asset Store Packages Used
+## 13. Asset Store Packages Used
 
 - Easy Primitive People (Character model)
 - Free Wood Door Pack (Door model and animation)
 - AurynSky Dungeon Pack (Spike Trap)
 - Game Buffs Free Stylized Textures (Wall/floor textures)
 - Rust Key (Key model)
+
