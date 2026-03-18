@@ -76,7 +76,7 @@ A 3D third-person maze escape game. The player navigates through a maze to find 
 
 | Technique           | Where Used                                   |
 | ------------------- | -------------------------------------------- |
-| Coroutine           | SpikeTrapDemo, GuardPatrol, TrapController   |
+| Coroutine           | SpikeTrapDemo, GuardPatrol                   |
 | Collision Detection | DoorController (OnCollisionEnter)            |
 | Trigger Detection   | FinishButton, KillZone (OnTriggerEnter/Stay) |
 | Rigidbody Physics   | Player, Key                                  |
@@ -92,4 +92,3 @@ A 3D third-person maze escape game. The player navigates through a maze to find 
 - AurynSky Dungeon Pack (Spike Trap)
 - Game Buffs Free Stylized Textures (Wall/floor textures)
 - Rust Key (Key model)
-
