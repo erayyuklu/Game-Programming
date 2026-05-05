@@ -46,14 +46,12 @@ public class BenchmarkRunner : MonoBehaviour
 
     void Awake()
     {
-        Application.targetFrameRate = -1;
-        QualitySettings.vSyncCount  = 0;
-
         if (spawner == null)
             spawner = GetComponent<BenchmarkSpawner>();
-
-        spawner.autoSpawnOnStart = false;
     }
+
+    // Start() only runs when the component is enabled — safe to set runner-mode flags here.
+    // Awake() runs even on disabled components, so autoSpawnOnStart must NOT be set there.
 
     void OnEnable()
     {
@@ -69,6 +67,10 @@ public class BenchmarkRunner : MonoBehaviour
 
     void Start()
     {
+        Application.targetFrameRate = -1;
+        QualitySettings.vSyncCount  = 0;
+        spawner.autoSpawnOnStart = false;
+
         Debug.Log($"[BenchmarkRunner] Recorders — batches valid={_batchesRec.Valid} setPass valid={_setPassRec.Valid}");
         StartCoroutine(RunAll());
     }
