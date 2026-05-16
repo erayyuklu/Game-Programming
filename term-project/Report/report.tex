@@ -36,94 +36,109 @@
 \section{Rationale}
 \label{sec:rationale}
 
-Every frame of a real-time 3D application begins with the CPU composing a list of
-rendering commands and submitting them to the GPU one by one.
-Each such submission is called a \emph{draw call}.
-Although modern GPUs are highly parallel, the CPU overhead of preparing and issuing
-each draw call is largely serial: state validation, driver translation, command buffer
-encoding.
-When a scene contains thousands of objects that share the same mesh and material -- a
-common scenario in open-world games, crowd simulations, and procedurally generated
-environments -- the CPU becomes the bottleneck not because of computational complexity
-but because of sheer command-submission volume.
+Every frame of a real-time 3D application starts the same way: the CPU assembles a
+list of rendering commands and hands them to the GPU one at a time. Each of those
+submissions is a \emph{draw call}. Modern GPUs are massively parallel, but the work
+of preparing and issuing a draw call stays largely serial on the CPU side, covering
+state validation, driver translation, and command-buffer encoding. Once a scene holds
+thousands of objects that share a mesh and a material (a common situation in
+open-world games, crowd simulations, and procedurally generated environments), the
+CPU turns into the bottleneck. The cause is not computational complexity; it is the
+sheer volume of commands that must be submitted every frame.
 
-Industry practitioners have documented this bottleneck extensively.
-Pranckevi\v{c}ius~\cite{aras2011batch} showed at GDC 2011 that even on
-then-modern hardware a practical real-time budget was approximately 1\,000--3\,000 draw
-calls per frame at 60\,FPS on console.
-Exceeding this budget causes the CPU to starve the GPU, leaving the GPU idle between
-batches and degrading frame rate.
-This problem has only grown in relevance: contemporary open-world titles regularly
-place tens of thousands of environmental props (trees, rocks, grass blades) in a single
-view frustum.
+This bottleneck is well documented by industry practitioners. At GDC 2011,
+Pranckevi\v{c}ius~\cite{aras2011batch} showed that even on the hardware of the day a
+practical real-time budget sat around 1\,000--3\,000 draw calls per frame at 60\,FPS
+on console. Go past that budget and the CPU starves the GPU, which then idles between
+batches while the frame rate falls. The problem has only become more pressing since:
+contemporary open-world titles routinely place tens of thousands of environmental
+props (trees, rocks, grass blades) inside a single view frustum.
 
-Two standard mitigation strategies exist within Unity's Built-in Render Pipeline.
-\textbf{GPU Instancing}~\cite{unitygpuinstancing} collapses all draw calls for objects
-that share a mesh and an instancing-enabled material into a single batched draw call,
-passing per-instance transform data in a GPU-side buffer.
-The CPU overhead therefore scales with the number of \emph{batches} (bounded by the
-driver's maximum instance count per call) rather than with~$N$.
-\textbf{Static Batching}~\cite{unitybatching} takes a complementary approach: it
-combines the mesh data of all participating objects into one large combined mesh at
-scene load time, issuing a single draw call covering the entire combined geometry.
-This eliminates per-object command overhead at the cost of duplicating vertex data
-in memory for every instance.
+Unity's Built-in Render Pipeline offers two standard ways to soften this cost.
+\textbf{GPU Instancing}~\cite{unitygpuinstancing} collapses every draw call for
+objects that share a mesh and an instancing-enabled material into a single batched
+call, passing the per-instance transform data in a GPU-side buffer. CPU overhead then
+scales with the number of \emph{batches}, bounded by the driver's maximum instance
+count per call, rather than with~$N$. \textbf{Static Batching}~\cite{unitybatching}
+attacks the same problem from the other side: at scene load it merges the mesh data of
+all participating objects into one large combined mesh and issues a single draw call
+over the whole geometry. Per-object command overhead disappears, but the vertex data
+of every instance is duplicated in memory.
 
-Choosing between these strategies has practical consequences.
-A Unity Discussions thread on batching trade-offs~\cite{unityforum2019} reports
-that Static Batching's vertex duplication can exhaust memory budgets on mobile
-and Apple Silicon targets, while the Unity blog on the SRP
-Batcher~\cite{unitysrpbatcher} clarifies that the Built-in Pipeline mechanisms
+The choice between the two is not academic. A Unity Discussions thread on batching
+trade-offs~\cite{unityforum2019} notes that Static Batching's mesh merging adds runtime
+memory overhead and lengthens startup, while GPU Instancing can place more load on the
+CPU than developers expect, so the better option is platform-dependent and should be
+confirmed by profiling rather than assumed. The Unity blog on the SRP
+Batcher~\cite{unitysrpbatcher} is careful to note that the Built-in Pipeline mechanisms
 studied here behave differently from the newer SRP Batcher.
-Akenine-M\"oller et al.~\cite{realtimerendering} further note that on tile-based
-GPU architectures (mobile and Apple Silicon SoCs) the gains from draw-call
-reduction can be partially offset by increased vertex-fetch pressure when geometry
-is large.  The present study quantifies both strategies on an Apple Silicon Metal
-backend, providing data directly relevant to developers targeting the macOS and
-iOS gaming market.
+Akenine-M\"oller et al.~\cite{realtimerendering} add a further caveat: on tile-based GPU
+architectures, which include mobile and Apple Silicon SoCs, the gains from draw-call
+reduction can be partly cancelled out by extra vertex-fetch pressure when the geometry
+is large. This study quantifies both strategies on an Apple Silicon Metal backend, so
+its data speaks directly to developers targeting the macOS and iOS gaming market.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Experiment Design}
 \label{sec:design}
 
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\textwidth]{../scene.png}
+  \caption{Test scene overview.}
+  \label{fig:scene}
+\end{figure}
+
 \subsection{Scene and Apparatus}
 
-All measurements were performed in a dedicated Unity 2022.3.62f3 scene
+All measurements were taken in a dedicated Unity 2022.3.62f3 scene
 (\texttt{InstancingBenchmark.unity}) on an Apple Silicon MacBook with the Metal
-graphics backend.  The scene contains one directional light (shadows disabled),
-a top-down perspective camera at $(0,\,160,\,0)$ with $90^\circ$ pitch and
-FOV~$70^\circ$ (its frustum covers $\pm105$\,units, comfortably enclosing the
-widest grid at $\pm75$\,units), and a runtime-spawned square grid of spheres
-at $y=0$ with 1.5-unit spacing.  Physics, animations, post-processing, shadows,
-and VSync were all disabled, and \texttt{Application.targetFrameRate} was set
-to $-1$ for unconstrained frame rates.
+graphics backend. The scene holds one directional light with shadows disabled, a
+top-down perspective camera at $(0,\,160,\,0)$ with $90^\circ$ pitch and FOV~$70^\circ$
+(its frustum reaches $\pm105$\,units, comfortably enclosing the widest grid at
+$\pm75$\,units), and a runtime-spawned square grid of spheres at $y=0$ with 1.5-unit
+spacing. Physics, animations, post-processing, shadows, and VSync were all switched off,
+and \texttt{Application.targetFrameRate} was set to $-1$ so the frame rate ran
+unconstrained.
+
+\subsubsection{Why the Test Scene Is Deliberately Minimal}
+
+The scene is intentionally bare, and that is a design choice rather than an oversight.
+Physics, skeletal animation, and post-processing each carry their own CPU cost, and on a
+unified-memory machine they also draw on the same RAM pool the renderer uses. Folding
+them in would mean the per-frame budget is no longer governed by draw-call submission,
+so a shift in frame time could no longer be attributed cleanly to the rendering mode
+under test. Reducing the scene to a static grid of identical spheres leaves the
+draw-call path as the only thing that changes between configurations, and that is
+exactly what keeps the 45-way comparison interpretable. The cost of a richer, more
+game-like frame is acknowledged separately in Section~\ref{sec:limitations}.
 
 \subsubsection{Deviations from the Phase-I Plan}
 
-The following changes were made relative to the Phase-I submission to strengthen
-experimental rigour:
+The following changes were made relative to the Phase-I submission to strengthen the
+experimental design:
 
 \begin{itemize}
   \item \textbf{Third rendering mode added.} Phase I described only Baseline and GPU
-        Instancing.  Static Batching was added as it is the primary alternative
-        optimisation strategy in Unity's Built-in Pipeline and provides an essential
-        reference for the memory/batch-count trade-off.
-  \item \textbf{Procedural UV spheres instead of imported assets.} Asset meshes
-        introduce uncontrolled vertex/triangle counts and licensing constraints.
-        Procedural spheres give exact, logged geometry counts and are fully
-        reproducible without external packages.
+        Instancing. Static Batching was added because it is the primary alternative
+        optimisation in Unity's Built-in Pipeline and supplies an essential reference
+        point for the memory/batch-count trade-off.
+  \item \textbf{Procedural UV spheres instead of imported assets.} Asset meshes bring
+        uncontrolled vertex and triangle counts and licensing constraints. Procedural
+        spheres give exact, logged geometry counts and are fully reproducible without
+        any external package.
   \item \textbf{Mesh complexity as a second independent variable.} Three subdivision
-        tiers (Low / Mid / High) isolate the effect of GPU vertex load independently
-        from the draw-call count, exposing the CPU-bound to GPU-bound transition.
-  \item \textbf{Total configurations grew from 10 to 45} (5 $N$ $\times$ 3 complexity
-        $\times$ 3 modes) and each configuration is repeated three times for
+        tiers (Low, Mid, High) isolate the effect of GPU vertex load independently of
+        the draw-call count, which exposes the CPU-bound to GPU-bound transition.
+  \item \textbf{Total configurations grew from 10 to 45} ($5\ N \times 3$ complexity
+        $\times\ 3$ modes), and each configuration is repeated three times for
         statistical reliability.
 \end{itemize}
 
 \subsection{Independent Variables}
 
-Three independent variables were crossed in a full factorial design,
-yielding $5 \times 3 \times 3 = 45$ configurations (Table~\ref{tab:ivs}).
+Three independent variables were crossed in a full factorial design, giving
+$5 \times 3 \times 3 = 45$ configurations (Table~\ref{tab:ivs}).
 
 \begin{table}[H]
   \centering
@@ -131,19 +146,19 @@ yielding $5 \times 3 \times 3 = 45$ configurations (Table~\ref{tab:ivs}).
   \label{tab:ivs}
   \begin{tabular}{lll}
     \toprule
-    Variable & Levels & Notes \\
+    Variable         & Levels                                    & Notes                 \\
     \midrule
-    Object count $N$ & 100, 500, 1\,000, 5\,000, 10\,000 & Spawned at runtime \\
-    Mesh complexity  & Low, Mid, High & Procedural UV spheres \\
-    Rendering mode   & Baseline, GPU Instancing, Static Batching & \\
+    Object count $N$ & 100, 500, 1\,000, 5\,000, 10\,000         & Spawned at runtime    \\
+    Mesh complexity  & Low, Mid, High                            & Procedural UV spheres \\
+    Rendering mode   & Baseline, GPU Instancing, Static Batching &                       \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \subsubsection{Mesh Complexity}
 
-Three procedural UV spheres were generated in code (no external packages)
-by varying the latitude/longitude subdivision count:
+Three procedural UV spheres were generated in code, with no external packages, by
+varying the latitude/longitude subdivision count:
 
 \begin{table}[H]
   \centering
@@ -153,78 +168,76 @@ by varying the latitude/longitude subdivision count:
     \toprule
     Level & Subdivisions (lat$\times$lon) & Triangles & Vertices \\
     \midrule
-    Low  & $8\times8$     & 112    & 58    \\
-    Mid  & $30\times30$   & 1\,740 & 872   \\
-    High & $100\times100$ & 19\,800 & 9\,902 \\
+    Low   & $8\times8$                    & 112       & 58       \\
+    Mid   & $30\times30$                  & 1\,740    & 872      \\
+    High  & $100\times100$                & 19\,800   & 9\,902   \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-All three meshes share a sphere radius of 0.5 units.
-Exact vertex and triangle counts are logged to the Unity Console at spawn time,
-allowing verification without external tools.
+All three meshes share a sphere radius of 0.5 units. Exact vertex and triangle counts
+are logged to the Unity Console at spawn time, so they can be verified without any
+external tool.
 
 \subsubsection{Rendering Modes}
 
 \textbf{Baseline.} Each object uses a Standard shader material with
-\textit{Enable GPU Instancing} unchecked.
-Unity issues one draw call per visible object, reproducing the worst-case
-unoptimised scenario.
+\textit{Enable GPU Instancing} unchecked. Unity issues one draw call per visible
+object, reproducing the worst-case unoptimised scenario.
 
-\textbf{GPU Instancing.} The same geometry is rendered with a second material on
-which \textit{Enable GPU Instancing} is enabled.
-Unity groups objects sharing the same mesh and material into instanced draw calls.
-On the Metal backend, the maximum instance count per call is approximately 500,
-so $N$ objects produce $\lceil N/500 \rceil$ instanced batches plus a small fixed
-overhead (typically 1--2 calls for camera and lighting).
+\textbf{GPU Instancing.} The same geometry is rendered with a second material that has
+\textit{Enable GPU Instancing} enabled. Unity groups objects sharing a mesh and
+material into instanced draw calls. On the Metal backend the maximum instance count
+per call is roughly 500, so $N$ objects produce $\lceil N/500 \rceil$ instanced batches
+plus a small fixed overhead (typically 1--2 calls for camera and lighting).
 
 \textbf{Static Batching.} Objects use the Baseline material, and
-\texttt{StaticBatchingUtility.Combine} is called at runtime to merge all meshes
-into a single combined mesh.
-Unity then issues draw calls sized by its internal 65\,536-vertex combined-mesh
-limit: the expected batch count is $\lceil N \cdot v / 65\,536 \rceil$, where $v$
-is the per-object vertex count.
-For low-poly objects this approaches 1; for high-poly objects it can approach
-or exceed the Baseline count.
+\texttt{StaticBatchingUtility.Combine} is called at runtime to merge all meshes into a
+single combined mesh. Unity then issues draw calls sized by its internal
+65\,536-vertex combined-mesh limit (the manual rounds this to ``64{,}000'', but the
+true boundary is the $2^{16}$ 16-bit index-buffer limit), so the expected batch count
+is $\lceil N \cdot v / 65\,536 \rceil$, where $v$ is the per-object vertex count. For
+low-poly objects this approaches 1; for high-poly objects it can climb to or past the
+Baseline count.
 
-\textbf{Dynamic Batching} was excluded because Unity restricts it to meshes
-with at most 300 vertices, a limit satisfied only by the Low-poly tier; including
-it would produce incomplete data for Mid and High tiers and bias the comparison.
+\textbf{Dynamic Batching} was left out because Unity restricts it to meshes with at
+most 300 vertices, a limit only the Low-poly tier satisfies. Including it would have
+produced incomplete data for the Mid and High tiers and biased the comparison.
 
 \subsection{Dependent Variables}
 
 \begin{itemize}
   \item \textbf{FPS average} -- mean of $1/\Delta t_{\text{unscaled}}$ over the
         measurement window.
-  \item \textbf{FPS 1\% low} -- mean of the bottom 1\% of per-frame FPS samples
-        (captures worst-case hitches).
-  \item \textbf{Wall-clock frame time (ms)} -- mean of $\Delta t_{\text{unscaled}} \times 1000$;
-        the full frame-to-frame duration experienced by the player, including GPU
-        synchronisation latency absorbed by the Metal driver
-        (see Section~\ref{sec:crossvalidation}).
+  \item \textbf{FPS 1\% low} -- mean of the bottom 1\% of per-frame FPS samples,
+        capturing worst-case hitches.
+  \item \textbf{Wall-clock frame time (ms)} -- mean of
+        $\Delta t_{\text{unscaled}} \times 1000$, the full frame-to-frame duration the
+        player actually experiences, including the GPU synchronisation latency the
+        Metal driver absorbs (see Section~\ref{sec:crossvalidation}).
   \item \textbf{GPU frame time (ms)} -- mean of \texttt{FrameTimingManager.gpuFrameTime}
-        sampled once per frame (zero samples discarded to avoid biasing the mean).
+        sampled once per frame, with zero samples discarded so they do not bias the
+        mean.
   \item \textbf{Draw call batches} -- median of the \texttt{Batches Count}
-        \texttt{ProfilerRecorder} sampled once per frame; where the Metal counter
+        \texttt{ProfilerRecorder} sampled once per frame. Where the Metal counter
         returned zero, the theoretical value is substituted
         (Section~\ref{sec:methodology}).
   \item \textbf{Total Reserved Memory (MB)} -- mean of the
-        \texttt{ProfilerCategory.Memory} ``Total Reserved Memory'' counter,
-        capturing the per-configuration memory footprint including the Static
-        Batching combined mesh.
+        \texttt{ProfilerCategory.Memory} ``Total Reserved Memory'' counter, capturing
+        the per-configuration memory footprint including the Static Batching combined
+        mesh.
 \end{itemize}
 
 \subsection{Control Variables}
 
 Camera position and orientation, lighting configuration, screen resolution
-($1920\times1080$), object grid layout, sphere scale, and hardware environment
+($1920\times1080$), object grid layout, sphere scale, and the hardware environment
 (Apple Silicon MacBook, Metal API) were held constant across all 45 configurations.
-Each configuration was measured three times (\texttt{repeats}~$= 3$).
-A 3-second warm-up period -- during which \texttt{FrameTimingManager.CaptureFrameTimings()}
-was called every frame to prime the Metal driver's GPU-timing pipeline -- was
-discarded before each 30-second measurement window.
-Per-frame GPU timing samples of zero were excluded from the mean to avoid
-downward bias during driver initialisation.
+Each configuration was measured three times (\texttt{repeats}~$= 3$). A 3-second
+warm-up, during which \texttt{FrameTimingManager.CaptureFrameTimings()} was called
+every frame to prime the Metal driver's GPU-timing pipeline, was discarded ahead of
+each 30-second measurement window. Per-frame GPU timing samples of zero were excluded
+from the mean to avoid a downward bias during driver initialisation.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Methodology}
@@ -232,29 +245,26 @@ downward bias during driver initialisation.
 
 \subsection{Automated Benchmark Harness}
 
-A \texttt{BenchmarkRunner} MonoBehaviour iterates over all 45 configurations
-in a Unity coroutine, repeating each three times (135 measurement windows total).
-For each window it calls \texttt{BenchmarkSpawner.Spawn()}, waits 3\,s
-(warm-up), records metrics frame-by-frame for 30\,s, then calls
-\texttt{BenchmarkSpawner.Clear()} followed by \texttt{System.GC.Collect()} and
-\texttt{Resources.UnloadUnusedAssets()} to release the Static Batching combined
-mesh before advancing.
-The full run takes $\approx$75 minutes; one row per repeat is written to a
-timestamped CSV under \texttt{BenchmarkResults/}, and Python aggregates the
-means and standard deviations.
+A \texttt{BenchmarkRunner} MonoBehaviour iterates over all 45 configurations in a Unity
+coroutine, repeating each three times for 135 measurement windows in total. For each
+window it calls \texttt{BenchmarkSpawner.Spawn()}, waits 3\,s for warm-up, records
+metrics frame-by-frame for 30\,s, then calls \texttt{BenchmarkSpawner.Clear()} followed
+by \texttt{System.GC.Collect()} and \texttt{Resources.\allowbreak UnloadUnusedAssets()} to release
+the Static Batching combined mesh before moving on. A full run takes about 75 minutes;
+one row per repeat is written to a timestamped CSV under \texttt{BenchmarkResults/}, and
+a Python script aggregates the means and standard deviations.
 
 Frame time is sampled via \texttt{Time.unscaledDeltaTime}; GPU time via
-\texttt{FrameTimingManager.GetLatestTimings} (zero-valued samples during driver
-initialisation are discarded); batch count via a \texttt{ProfilerRecorder} on
-\texttt{Batches Count}; memory via \texttt{Total Reserved}, \texttt{Gfx Reserved},
-and \texttt{GC Reserved} memory recorders.
-On Metal, the \texttt{Batches Count} recorder intermittently returns zero; in
-those cases the analysis script substitutes the theoretical formula
-($N{+}1$ for Baseline, $\lceil N/500 \rceil$ for GPU Instancing,
-$\lceil N \cdot v / 65\,536 \rceil$ for Static Batching).
-The \texttt{SetPass Calls Count} recorder consistently returned~2 regardless of
-mode or $N$ (confirmed in the Game-window Statistics overlay,
-Section~\ref{sec:statsval}) and is excluded from the CSV.
+\texttt{FrameTimingManager.\allowbreak GetLatestTimings}, with zero-valued samples from driver
+initialisation discarded; batch count via a \texttt{ProfilerRecorder} on
+\texttt{Batches Count}; and memory via the \texttt{Total Reserved},
+\texttt{Gfx Reserved}, and \texttt{GC Reserved} memory recorders. On Metal the
+\texttt{Batches Count} recorder intermittently returns zero. For those cases the
+analysis script substitutes the theoretical formula ($N{+}1$ for Baseline,
+$\lceil N/500 \rceil$ for GPU Instancing, $\lceil N \cdot v / 65\,536 \rceil$ for
+Static Batching). The \texttt{SetPass Calls Count} recorder consistently returned 2
+regardless of mode or $N$, which was confirmed in the Game-window Statistics overlay
+(Section~\ref{sec:statsval}), so it is excluded from the CSV.
 
 \subsection{Profiler Cross-Validation}
 \label{sec:crossvalidation}
@@ -269,40 +279,37 @@ Results are summarised in Table~\ref{tab:crossval}.
   \label{tab:crossval}
   \begin{tabular}{llccc}
     \toprule
-    Configuration & Metric & Harness & Profiler & Note \\
+    Configuration                   & Metric          & Harness  & Profiler     & Note                           \\
     \midrule
-    Baseline $N$=1\,000 Mid      & Frame time (ms) & 1.15 & 1.10 & $\Delta = 0.05$\,ms \checkmark \\
-    Static Batching $N$=5\,000 Mid & Frame time (ms) & 3.09 & $\approx$3.5 & within 0.5\,ms tolerance \\
-    GPU Instancing $N$=10\,000 High & Frame time (ms) & 65.7 & 66.2 & Metal async \checkmark \\
-    All configs & GPU ms & measured & \texttt{--} & Not exposed on Metal \\
+    Baseline $N$=1\,000 Mid         & Frame time (ms) & 1.15     & 1.10         & $\Delta = 0.05$\,ms \checkmark \\
+    Static Batching $N$=5\,000 Mid  & Frame time (ms) & 3.07     & $\approx$3.5 & within 0.5\,ms tolerance       \\
+    GPU Instancing $N$=10\,000 High & Frame time (ms) & 65.7     & 66.2         & Metal async \checkmark         \\
+    All configs                     & GPU ms          & measured & \texttt{--}  & Not exposed on Metal           \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-The GPU Instancing $N$=10\,000 High row reveals the binding constraint at high
-mesh complexity.
-The Profiler shows 66.2\,ms CPU frame time, dominated by
-\texttt{Gfx.WaitForPresentOnGfxThread} (62.8\,ms): the main thread submits the
-21 instanced draw calls in only $\approx$3\,ms, but the game loop cannot begin a
-new frame until the GPU finishes presenting the previous one.
-Rendering $\sim$198 million triangles takes the GPU $\approx$66\,ms; this stall is
-absorbed into \texttt{Time.unscaledDeltaTime} and is also surfaced inside
-\texttt{Gfx.WaitForPresentOnGfxThread} in the Profiler timeline, so the harness
-and Profiler agree to within 0.5\,ms.
-\textbf{This confirms that wall-clock frame time (\texttt{Time.unscaledDeltaTime})
-is the appropriate player-facing metric: it consistently equals
-Profiler $\text{Main Thread} + \text{Wait-for-Present}$ across CPU-bound and
-GPU-bound regimes, while the GPU-side cost itself is invisible to the Profiler's
-GPU module on Metal and must be obtained from \texttt{FrameTimingManager}.}
+The GPU Instancing $N$=10\,000 High row exposes the binding constraint at high mesh
+complexity. The Profiler shows 66.2\,ms of CPU frame time, almost all of it inside
+\texttt{Gfx.WaitForPresentOnGfxThread} (62.8\,ms). The main thread submits the 21
+instanced draw calls in only about 3\,ms, but the game loop cannot start a new frame
+until the GPU has finished presenting the previous one. Rendering roughly 198 million
+triangles takes the GPU about 66\,ms, and that stall is absorbed into
+\texttt{Time.unscaledDeltaTime} while also surfacing inside
+\texttt{Gfx.WaitForPresentOnGfxThread} in the Profiler timeline, so harness and
+Profiler agree to within 0.5\,ms. This confirms that wall-clock frame time
+(\texttt{Time.unscaledDeltaTime}) is the right player-facing metric: it consistently
+matches Profiler $\text{Main Thread} + \text{Wait-for-Present}$ across both CPU-bound
+and GPU-bound regimes, whereas the GPU-side cost itself is invisible to the Profiler's
+GPU module on Metal and has to be read from \texttt{FrameTimingManager}.
 
 \subsection{Game-Window Statistics Cross-Validation}
 \label{sec:statsval}
 
 To cross-validate batch counts independently of the \texttt{ProfilerRecorder}, the
 Unity Game-window Statistics overlay was captured for three configurations at
-$N=1\,000$, Mid-poly.
-Results are shown in Table~\ref{tab:statsval} and the screenshots are presented
-in Figure~\ref{fig:stats}.
+$N=1\,000$, Mid-poly. Results are shown in Table~\ref{tab:statsval}, with the
+screenshots in Figure~\ref{fig:stats}.
 
 \begin{table}[H]
   \centering
@@ -310,11 +317,11 @@ in Figure~\ref{fig:stats}.
   \label{tab:statsval}
   \begin{tabular}{lcccc}
     \toprule
-    Mode & Stats Batches & Harness Batches & Saved by batching & SetPass calls \\
+    Mode            & Stats Batches & Harness Batches & Saved by batching & SetPass calls \\
     \midrule
-    Baseline       & 1\,001 & 1\,001 & 0   & 2 \\
-    GPU Instancing & 3      & 3      & 998 & 2 \\
-    Static Batching & 15    & 15     & 986 & 2 \\
+    Baseline        & 1\,001        & 1\,001          & 0                 & 2             \\
+    GPU Instancing  & 3             & 3               & 998               & 2             \\
+    Static Batching & 15            & 15              & 986               & 2             \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -327,32 +334,30 @@ in Figure~\ref{fig:stats}.
   \hfill
   \includegraphics[width=0.32\textwidth]{static-mid-1000.png}
   \caption{Game-window Statistics overlay at $N=1\,000$ Mid-poly.
-           Left: Baseline (1\,001 batches, 0 saved).
-           Centre: GPU Instancing (3 batches, 998 saved by batching).
-           Right: Static Batching (15 batches, 986 saved).
-           SetPass calls = 2 in all cases, confirming the counter is not
-           correctly surfaced via \texttt{ProfilerRecorder} on Metal.}
+    Left: Baseline (1\,001 batches, 0 saved).
+    Centre: GPU Instancing (3 batches, 998 saved by batching).
+    Right: Static Batching (15 batches, 986 saved).
+    SetPass calls = 2 in every case, which is why the counter cannot be read
+    reliably through \texttt{ProfilerRecorder} on Metal.}
   \label{fig:stats}
 \end{figure}
 
 \subsection{Profiler Visual Cross-Validation}
 \label{sec:profilervis}
 
-Figures~\ref{fig:prof-baseline}--\ref{fig:prof-static} present Unity Editor
-Profiler timeline captures for three reference configurations, validating the
-harness frame-time measurements visually.
-The GPU-bound case (Figure~\ref{fig:prof-gpuinst}) is the most informative: the
-Main Thread is dominated by \texttt{Gfx.WaitForPresentOnGfxThread} (62.8\,ms),
-confirming that the wall-clock frame time captured by the harness reflects the
-GPU synchronisation stall and not CPU work.
+Figures~\ref{fig:prof-baseline}--\ref{fig:prof-static} show Unity Editor Profiler
+timeline captures for the three reference configurations, validating the harness
+frame-time measurements visually. The GPU-bound case (Figure~\ref{fig:prof-gpuinst})
+is the most informative of the set, for the reasons discussed in
+Section~\ref{sec:crossvalidation}.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\textwidth]{profiler_baseline_1000_mid.png}
   \caption{Profiler timeline -- Baseline $N$=1\,000 Mid.  A representative
-           higher-cost frame is shown for legibility (CPU 5.70\,ms;
-           steady-state median $\approx$1.1\,ms from the Stats overlay).
-           GPU module is empty on Metal; CPU-bound.}
+    higher-cost frame is shown for legibility (CPU 5.70\,ms;
+    steady-state median $\approx$1.1\,ms from the Stats overlay).
+    The GPU module is empty on Metal; this configuration is CPU-bound.}
   \label{fig:prof-baseline}
 \end{figure}
 
@@ -360,10 +365,10 @@ GPU synchronisation stall and not CPU work.
   \centering
   \includegraphics[width=0.95\textwidth]{profiler_gpuinst_10000_high.png}
   \caption{Profiler timeline -- GPU Instancing $N$=10\,000 High.
-           CPU 66.24\,ms, Main Thread dominated by
-           \texttt{Gfx.WaitForPresentOnGfxThread} (62.8\,ms): a GPU-bound
-           Metal synchronisation stall.  This is the single most informative
-           capture in the cross-validation set.}
+    CPU 66.24\,ms, with the Main Thread dominated by
+    \texttt{Gfx.WaitForPresentOnGfxThread} (62.8\,ms): a GPU-bound Metal
+    synchronisation stall, and the single most informative capture in the
+    cross-validation set.}
   \label{fig:prof-gpuinst}
 \end{figure}
 
@@ -371,8 +376,8 @@ GPU synchronisation stall and not CPU work.
   \centering
   \includegraphics[width=0.95\textwidth]{profiler_sb_5000_mid.png}
   \caption{Profiler timeline -- Static Batching $N$=5\,000 Mid.
-           CPU 5.47\,ms -- comparable to Baseline at much lower $N$, because
-           the combined-mesh draw call is fast despite the high object count.}
+    CPU 5.47\,ms, comparable to Baseline at a much lower $N$, because the
+    combined-mesh draw call is fast despite the high object count.}
   \label{fig:prof-static}
 \end{figure}
 
@@ -385,19 +390,20 @@ GPU synchronisation stall and not CPU work.
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{fig1_fps_vs_n.png}
-  \caption{Average FPS (mean $\pm 1\sigma$ across 3 repeats) vs.\
-           object count $N$ on a log scale, for each mesh complexity.
-           Baseline degrades rapidly with $N$; GPU Instancing and Static Batching
-           maintain substantially higher frame rates at low--mid polygon counts.
-           At high polygon count all modes become GPU-bound
-           (frame times $\gtrsim$65\,ms at $N=10\,000$).}
+  \caption{Average FPS (mean $\pm 1\sigma$ across 3 repeats) vs.\ object count $N$ on a
+    log scale, for each mesh complexity. Baseline degrades quickly with $N$,
+    while GPU Instancing and Static Batching hold substantially higher frame
+    rates at low and mid polygon counts. At high polygon count every mode
+    becomes GPU-bound, with frame times $\gtrsim$65\,ms at $N=10\,000$.}
   \label{fig:fps}
 \end{figure}
 
-At $N=10\,000$ low-poly the gap is large: Baseline reaches 114\,FPS, GPU
-Instancing 275\,FPS, Static Batching 365\,FPS.  At $N=10\,000$ high-poly all
-three modes converge into a GPU-bound regime ($\le$20\,FPS) because the GPU
-itself is saturated regardless of how the draw calls are issued.
+At $N=10\,000$ low-poly the spread is wide: Baseline manages 114\,FPS while GPU
+Instancing reaches 275 and Static Batching 365. The picture changes at high-poly. There
+the GPU itself saturates, frame times climb past 65\,ms, and the frame rate collapses
+across the board (Baseline 21\,FPS, Static Batching 40, GPU Instancing 55). The
+optimised modes keep only a fraction of the lead they held while the scene was
+CPU-bound. The detailed numbers at $N=10\,000$ are given in Table~\ref{tab:n10k}.
 
 \subsection{Draw Call Batches vs.\ Object Count}
 
@@ -405,36 +411,34 @@ itself is saturated regardless of how the draw calls are issued.
   \centering
   \includegraphics[width=\textwidth]{fig2_batches_vs_n.png}
   \caption{Draw call batch count (mean $\pm 1\sigma$) vs.\ $N$ on a log-log scale.
-           Where the \texttt{ProfilerRecorder} returned zero on Metal, the
-           theoretical batch count is substituted (see
-           Section~\ref{sec:methodology}).
-           Baseline grows linearly ($N+1$ batches).
-           GPU Instancing grows as $\lceil N/500 \rceil$.
-           Static Batching's growth rate depends strongly on mesh complexity.}
+    Where the \texttt{ProfilerRecorder} returned zero on Metal, the theoretical
+    batch count is substituted (see Section~\ref{sec:methodology}).
+    Baseline grows linearly ($N+1$ batches). GPU Instancing grows as
+    $\lceil N/500 \rceil$. Static Batching's growth rate depends strongly on
+    mesh complexity.}
   \label{fig:batches}
 \end{figure}
 
-Baseline grows linearly (slope 1).  GPU Instancing stays nearly flat (2 batches
-at $N=100$, 21 at $N=10\,000$, complexity-independent).  Static Batching tracks
-GPU Instancing for low-poly meshes but degrades sharply with mesh complexity
-(detailed in Section~\ref{sec:staticdeg}).
+Baseline grows linearly with slope 1. GPU Instancing stays nearly flat (2 batches at
+$N=100$, 21 at $N=10\,000$, independent of complexity). Static Batching tracks GPU
+Instancing for low-poly meshes but degrades sharply as mesh complexity rises, a pattern
+examined in Section~\ref{sec:staticdeg}.
 
 \subsection{Wall-Clock Frame Time vs.\ GPU Frame Time}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{fig3_cpu_gpu_scatter.png}
-  \caption{Wall-clock frame time vs.\ GPU frame time scatter plot,
-           colour-coded by rendering mode. Marker size encodes $N$.
-           Points near the diagonal are GPU-bound (wall-clock $\approx$ GPU time);
-           points below the diagonal are CPU-bound (wall-clock $>$ GPU time,
-           gap absorbed by Metal synchronisation).}
+  \caption{Wall-clock frame time vs.\ GPU frame time, colour-coded by rendering mode,
+    with marker size encoding $N$. Points near the diagonal are GPU-bound
+    (wall-clock $\approx$ GPU time); points below the diagonal are CPU-bound,
+    where the gap is absorbed by Metal synchronisation.}
   \label{fig:scatter}
 \end{figure}
 
-At low and mid polygon counts, wall-clock frame time exceeds GPU time
-(CPU-bound).  As complexity grows, GPU frame time rises and points migrate
-toward the diagonal -- the GPU becomes the binding constraint.
+At low and mid polygon counts the wall-clock frame time exceeds the GPU time, so the
+scene is CPU-bound. As complexity grows the GPU frame time rises and the points migrate
+toward the diagonal: the GPU becomes the binding constraint.
 
 \subsection{Comparison at \boldmath$N=10\,000$}
 
@@ -442,39 +446,47 @@ toward the diagonal -- the GPU becomes the binding constraint.
   \centering
   \includegraphics[width=\textwidth]{fig4_bar_n10000.png}
   \caption{Performance metrics at $N=10\,000$ for all mode--complexity combinations
-           (mean $\pm 1\sigma$).
-           From left to right: average FPS, wall-clock frame time, GPU frame time,
-           and draw call batch count (log scale).}
+    (mean $\pm 1\sigma$).
+    From left to right: average FPS, wall-clock frame time, GPU frame time,
+    and draw call batch count (log scale).}
   \label{fig:bar}
 \end{figure}
 
-Table~\ref{tab:n10k} presents the numerical values underlying Figure~\ref{fig:bar}.
-Batch counts marked with $\dagger$ were filled from the theoretical formula because
-the Metal \texttt{Batches Count} recorder returned zero for those configurations.
+Table~\ref{tab:n10k} gives the numerical values behind Figure~\ref{fig:bar}. Batch
+counts marked with $\dagger$ were filled from the theoretical formula because the Metal
+\texttt{Batches Count} recorder returned zero for those configurations.
 
 \begin{table}[H]
   \centering
   \caption{Measured metrics at $N=10\,000$ for all nine mode--complexity combinations
-           (mean of 3 repeats). $\dagger$ = theoretical batch count (Metal recorder returned 0).}
+    (mean of 3 repeats). $\dagger$ = theoretical batch count (Metal recorder
+    returned 0).}
   \label{tab:n10k}
   \begin{tabular}{llrrrr}
     \toprule
-    Mode & Complexity & FPS avg & Frame (ms) & GPU (ms) & Batches \\
+    Mode            & Complexity & FPS avg & Frame (ms) & GPU (ms) & Batches          \\
     \midrule
-    Baseline        & Low  & 114   & 8.80  & 3.71  & 10\,001 \\
-    Baseline        & Mid  & 329   & 3.26  & 3.52  & 10\,001$\dagger$ \\
-    Baseline        & High &  21   & 79.1  & 79.9  & 10\,001$\dagger$ \\
+    Baseline        & Low        & 114     & 8.80       & 3.71     & 10\,001          \\
+    Baseline        & Mid        & 329     & 3.26       & 3.52     & 10\,001$\dagger$ \\
+    Baseline        & High       & 21      & 79.1       & 79.9     & 10\,001$\dagger$ \\
     \midrule
-    GPU Instancing  & Low  & 275   & 3.64  & 2.27  & 21 \\
-    GPU Instancing  & Mid  & 199   & 5.72  & 6.11  & 21 \\
-    GPU Instancing  & High &  55   & 65.7  & 66.3  & 21 \\
+    GPU Instancing  & Low        & 275     & 3.64       & 2.27     & 21               \\
+    GPU Instancing  & Mid        & 199     & 5.72       & 6.11     & 21               \\
+    GPU Instancing  & High       & 55      & 65.7       & 66.3     & 21               \\
     \midrule
-    Static Batching & Low  & 365   & 2.77  & 1.97  & 11 \\
-    Static Batching & Mid  & 205   & 5.86  & 6.13  & 138 \\
-    Static Batching & High &  40   & 69.0  & 67.2  & 1\,668 \\
+    Static Batching & Low        & 365     & 2.77       & 1.97     & 11               \\
+    Static Batching & Mid        & 205     & 5.86       & 6.13     & 138              \\
+    Static Batching & High       & 40      & 69.0       & 67.2     & 1\,668           \\
     \bottomrule
   \end{tabular}
 \end{table}
+
+A note on reading the FPS column: ``FPS avg'' is the mean of the per-frame value
+$1/\Delta t$, so under variable frame times it weights the cheap frames more heavily
+and sits above $1000/(\text{mean frame time})$. The high-poly rows are the clearest
+example, where a 79\,ms mean frame time still reports 21\,FPS. Wall-clock frame time is
+therefore the more robust of the two metrics, and the discussion below leans on it
+whenever the two could disagree.
 
 \subsection{Static Batching Degradation with Mesh Complexity}
 \label{sec:staticdeg}
@@ -483,20 +495,19 @@ the Metal \texttt{Batches Count} recorder returned zero for those configurations
   \centering
   \includegraphics[width=0.75\textwidth]{fig5_static_batch_breakdown.png}
   \caption{Static Batching batch count (mean $\pm 1\sigma$) vs.\ $N$ per mesh
-           complexity level, with GPU Instancing (Mid) shown as reference.
-           The 65\,536-vertex combined-mesh limit causes batch count to
-           scale as $\lceil N \cdot v / 65\,536 \rceil$.}
+    complexity level, with GPU Instancing (Mid) shown for reference. The
+    65\,536-vertex combined-mesh limit makes the batch count scale as
+    $\lceil N \cdot v / 65\,536 \rceil$.}
   \label{fig:staticbreakdown}
 \end{figure}
 
-Figure~\ref{fig:staticbreakdown} isolates the most consequential limitation of
-Static Batching: Unity internally splits the combined mesh at every 65\,536-vertex
-boundary.
-For high-poly objects (9\,902 vertices each), $N=10\,000$ produces
-$\lceil 10\,000 \times 9\,902 / 65\,536 \rceil = 1\,511$ theoretical batches
-(measured: 1\,668, $\Delta = +157$, consistent across all 3 repeats).
-At this point Static Batching provides negligible improvement over Baseline
-($10\,001$ batches) and is dramatically worse than GPU Instancing (21 batches).
+Figure~\ref{fig:staticbreakdown} isolates the most consequential limitation of Static
+Batching: Unity internally splits the combined mesh at every 65\,536-vertex boundary.
+For high-poly objects of 9\,902 vertices each, $N=10\,000$ produces
+$\lceil 10\,000 \times 9\,902 / 65\,536 \rceil = 1\,511$ theoretical batches, against a
+measured 1\,668 ($\Delta = +157$, consistent across all 3 repeats). At that point
+Static Batching offers almost no improvement over Baseline ($10\,001$ batches) and is
+dramatically worse than GPU Instancing (21 batches).
 
 \subsection{Memory Cost}
 \label{sec:memory}
@@ -504,20 +515,19 @@ At this point Static Batching provides negligible improvement over Baseline
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{fig6_memory_vs_n.png}
-  \caption{Total reserved memory (MB, mean $\pm 1\sigma$) vs.\ object count $N$
-           on a log scale, per mesh complexity.
-           Static Batching's combined mesh causes memory to grow linearly with
-           $N \times v$; at $N=10\,000$ High-poly it reaches $\approx$6\,200\,MB
-           versus $\approx$1\,380\,MB for GPU Instancing and
-           $\approx$1\,265\,MB for Baseline.}
+  \caption{Total reserved memory (MB, mean $\pm 1\sigma$) vs.\ object count $N$ on a
+    log scale, per mesh complexity. The Static Batching combined mesh makes
+    memory grow linearly with $N \times v$; at $N=10\,000$ High-poly it reaches
+    about 6\,200\,MB, against roughly 1\,380\,MB for GPU Instancing and
+    1\,265\,MB for Baseline.}
   \label{fig:memory}
 \end{figure}
 
-Memory reserved by the Static Batching combined mesh grows proportionally to
-$N \times v$ (Section~\ref{sec:memtrade}), imposing a severe cost at high object
-counts and high mesh complexity.
-GPU Instancing stores only one mesh plus $N$ transform matrices (a few MB), so
-its memory footprint tracks Baseline across all configurations.
+The memory reserved by the Static Batching combined mesh grows in proportion to
+$N \times v$ (Section~\ref{sec:memtrade}), which imposes a severe cost at high object
+counts and high mesh complexity. GPU Instancing stores only one mesh plus $N$ transform
+matrices, a few MB in total, so its memory footprint tracks Baseline across every
+configuration.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Discussion}
@@ -525,164 +535,158 @@ its memory footprint tracks Baseline across all configurations.
 
 \subsection{Draw-Call Reduction and CPU Relief}
 
-The primary hypothesis is confirmed: at large $N$ with low- or mid-poly meshes,
-GPU Instancing reduces draw calls from $O(N)$ to $O(N/500)$ and measurably
-lowers wall-clock frame time.
-At $N=10\,000$ low-poly, the wall-clock frame time drops from 8.80\,ms (Baseline)
-to 3.64\,ms (GPU Instancing), a 59\% reduction.
-Static Batching with low-poly meshes achieves the best absolute frame rate
-(365\,FPS at $N=10\,000$) because its combined-mesh batching is most efficient
-when the vertex count per object is small enough to fit many objects into a single
-65\,536-vertex chunk.
+The primary hypothesis holds: at large $N$ with low- or mid-poly meshes, GPU Instancing
+cuts draw calls from $O(N)$ to $O(N/500)$ and measurably lowers the wall-clock frame
+time. At $N=10\,000$ low-poly the frame time drops from 8.80\,ms under Baseline to
+3.64\,ms under GPU Instancing, a 59\% reduction. Static Batching with low-poly meshes
+posts the best absolute frame rate (365\,FPS at $N=10\,000$), because its combined-mesh
+batching is most efficient when the per-object vertex count is small enough to pack
+many objects into a single 65\,536-vertex chunk.
 
 \subsection{CPU-Bound to GPU-Bound Transition}
 
-At high mesh complexity and large $N$, the bottleneck shifts from the CPU
-(draw-call overhead) to the GPU (vertex and fragment processing).
-At $N=10\,000$ high-poly, wall-clock frame times are 79.1\,ms (Baseline),
-65.7\,ms (GPU Instancing), and 69.0\,ms (Static Batching) -- corresponding to
-roughly 12--15\,FPS -- indicating near-total GPU saturation.
-GPU Instancing's draw-call advantage still provides a 17\% frame-time improvement
-over Baseline (65.7 vs 79.1\,ms), but this advantage narrows sharply compared to
-CPU-bound configurations where the speedup exceeds $2\times$.
-This transition is visible in both the scatter plot (Figure~\ref{fig:scatter})
-and the bar chart (Figure~\ref{fig:bar}): as complexity and $N$ grow, the GPU
-frame time approaches the wall-clock frame time, indicating the GPU is the
-binding constraint.
+At high mesh complexity and large $N$ the bottleneck moves from the CPU, where
+draw-call overhead dominates, to the GPU, where vertex and fragment processing dominate.
+At $N=10\,000$ high-poly the wall-clock frame times are 79.1\,ms (Baseline), 65.7\,ms
+(GPU Instancing), and 69.0\,ms (Static Batching): the three values fall within roughly
+20\% of one another, a clear sign that the GPU is close to fully saturated. GPU
+Instancing's draw-call advantage still buys a 17\% frame-time improvement over Baseline
+(65.7 vs 79.1\,ms), but that margin is far narrower than in CPU-bound configurations,
+where the speedup exceeds $2\times$. The same transition shows up in both the scatter
+plot (Figure~\ref{fig:scatter}) and the bar chart (Figure~\ref{fig:bar}): as complexity
+and $N$ grow, the GPU frame time approaches the wall-clock frame time.
 
 \subsection{Static Batching: Batch-Count and Memory Trade-off}
 \label{sec:memtrade}
 
-Static Batching wins on frame rate only when the combined mesh fits in very few
-65\,536-vertex chunks; at $N=10\,000$ high-poly it issues 1\,668 batches and
-nearly nullifies the optimisation.  Table~\ref{tab:staticbatch} breaks down
-theoretical $\lceil N \cdot v / 65\,536 \rceil$ versus measured batch counts:
-the consistent $+1$ to $+2$ excess is fixed camera/lighting overhead, and the
-$+157$ excess at high-poly $N=10\,000$ reflects index-buffer overhead at the
-vertex-limit boundary.
+Static Batching wins on frame rate only while the combined mesh fits into very few
+65\,536-vertex chunks. At $N=10\,000$ high-poly it issues 1\,668 batches and the
+optimisation is all but nullified. Table~\ref{tab:staticbatch} breaks down the
+theoretical $\lceil N \cdot v / 65\,536 \rceil$ against the measured batch counts: the
+steady $+1$ to $+2$ excess is fixed camera/lighting overhead, while the $+157$ excess
+at high-poly $N=10\,000$ reflects index-buffer overhead at the vertex-limit boundary.
 
 \begin{table}[H]
   \centering
   \caption{Static Batching theoretical vs.\ measured batch count.
-           $\Delta =$ measured $-$ theoretical.}
+    $\Delta =$ measured $-$ theoretical.}
   \label{tab:staticbatch}
   \input{../Analysis/figures/static_batch_table.tex}
 \end{table}
 
-The memory cost is the second half of the trade-off (Figure~\ref{fig:memory}).
-At $N=10\,000$ high-poly, Static Batching reserves $\approx$6\,200\,MB --- a
-4.5$\times$ overhead versus the $\approx$1\,265--1\,380\,MB of Baseline and GPU
-Instancing --- because $10\,000 \times 9\,902 \approx 99$~million vertices are
-duplicated in the CPU-side combined mesh.  On Apple Silicon's unified memory
-architecture this competes directly with CPU memory.  The practical guideline
-is therefore: Static Batching for low-poly-heavy scenes (foliage, small props)
-where the combined mesh stays compact; GPU Instancing as the robust default
-for high-poly objects or $N\gtrsim 5\,000$.
+Memory is the second half of the trade-off (Figure~\ref{fig:memory}). At $N=10\,000$
+high-poly, Static Batching reserves about 6\,200\,MB, a 4.5$\times$ overhead against the
+roughly 1\,265--1\,380\,MB of Baseline and GPU Instancing, because
+$10\,000 \times 9\,902 \approx 99$~million vertices are duplicated in the CPU-side
+combined mesh. The practical guideline that follows is straightforward: use Static
+Batching for low-poly-heavy scenes such as foliage and small props, where the combined
+mesh stays compact, and treat GPU Instancing as the robust default for high-poly
+objects or for $N\gtrsim 5\,000$.
 
 \subsection{Apple Silicon Unified Memory Note}
 
-Apple Silicon's unified memory means GPU memory pressure from the Static
-Batching combined mesh competes directly with CPU memory --- a meaningful
-difference from discrete-GPU systems where separate VRAM pools exist, and the
-reason the 4.5$\times$ memory cost above is consequential rather than absorbed
+On Apple Silicon the unified-memory architecture means the GPU-side pressure from the
+Static Batching combined mesh competes directly with CPU memory. That is a meaningful
+difference from discrete-GPU systems, where a separate VRAM pool exists, and it is the
+reason the 4.5$\times$ memory cost above matters in practice rather than being absorbed
 silently into a dedicated VRAM budget.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Limitations}
 \label{sec:limitations}
 
-The following limitations bound the applicability of the conclusions:
+A few limitations bound how far these conclusions can be carried:
 
 \begin{itemize}
-  \item \textbf{Single platform.} All measurements were taken on Apple Silicon
-        Metal.  D3D11 and Vulkan backends may exhibit different batch-count
-        saturation points and GPU synchronisation behaviour.
-  \item \textbf{Built-in Render Pipeline only.}  URP, HDRP, and the SRP Batcher
-        use fundamentally different batching mechanisms and are out of scope.
-  \item \textbf{No overdraw, no shadows, no post-processing.}  The top-down opaque
-        grid isolates the draw-call effect but is not representative of a full game
-        frame; fragment cost is intentionally minimal.
-  \item \textbf{No animation, physics, or audio.} Removing these systems ensures
-        the frame budget is dominated by rendering, but real games carry additional
-        CPU load that may shift the CPU/GPU balance.
-  \item \textbf{Fixed camera, no frustum culling exercise.}  All objects are
-        always in the frustum, so per-object culling savings of GPU Instancing
-        (which can skip culled instances) versus Static Batching's all-or-nothing
-        combined mesh were not measured.
-  \item \textbf{Editor-mode measurement.}  Cross-validation showed harness and
-        Profiler agreement within 0.5\,ms, so any EditorLoop overhead is
-        sub-millisecond on this hardware.
+  \item \textbf{Single platform.} All measurements were taken on Apple Silicon Metal.
+        The D3D11 and Vulkan backends may show different batch-count saturation points
+        and different GPU synchronisation behaviour.
+  \item \textbf{Built-in Render Pipeline only.} URP, HDRP, and the SRP Batcher use
+        fundamentally different batching mechanisms and are out of scope here.
+  \item \textbf{No overdraw, no shadows, no post-processing.} The top-down opaque grid
+        isolates the draw-call effect cleanly but is not representative of a full game
+        frame, in which fragment cost would be far higher.
+  \item \textbf{No animation, physics, or audio.} As explained in
+        Section~\ref{sec:design}, removing these systems keeps the frame budget
+        dominated by rendering, which is what the experiment needs. A real game carries
+        additional CPU load that would shift the CPU/GPU balance, and quantifying that
+        shift is left to future work.
+  \item \textbf{Fixed camera, no frustum culling exercise.} Every object stays inside
+        the frustum, so the per-object culling savings of GPU Instancing, which can
+        skip culled instances, were not measured against Static Batching's
+        all-or-nothing combined mesh.
+  \item \textbf{Editor-mode measurement.} Cross-validation showed harness and Profiler
+        agreement within 0.5\,ms, so any EditorLoop overhead is sub-millisecond on this
+        hardware.
 \end{itemize}
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Conclusion}
 \label{sec:conclusion}
 
-This study measured the performance impact of GPU Instancing and Static Batching
-across 135 measurement windows (45 configurations $\times$ 3 repeats) spanning
-five object counts, three mesh complexities, and three rendering modes on Apple
-Silicon Metal.
+This study measured the performance impact of GPU Instancing and Static Batching across
+135 measurement windows (45 configurations $\times$ 3 repeats) spanning five object
+counts, three mesh complexities, and three rendering modes on Apple Silicon Metal.
 
 The key findings are:
 \begin{enumerate}
   \item \textbf{GPU Instancing} reliably reduces draw calls to $\lceil N/500 \rceil$
-        batches regardless of mesh complexity, providing significant frame-time
-        savings \emph{while the scene is CPU-bound}.  At high mesh complexity and
-        large $N$ the GPU becomes the binding constraint and the benefit narrows
-        (17\% at $N=10\,000$ High vs.\ $\sim$59\% at $N=10\,000$ Low).
-  \item \textbf{Static Batching} outperforms GPU Instancing for low-poly objects
-        but degrades sharply with mesh complexity due to Unity's 65\,536-vertex
-        combined-mesh limit.  At high-poly + $N=10\,000$ it offers negligible
-        benefit over unoptimised Baseline and consumes 4.5$\times$ more memory.
-  \item At high mesh complexity and large $N$, \textbf{GPU-bound} conditions
-        cause all three modes to converge toward similar wall-clock frame times,
-        confirming that draw-call optimisation is effective only while the CPU
-        is the bottleneck.
+        batches regardless of mesh complexity, and delivers significant frame-time
+        savings while the scene is CPU-bound. Once mesh complexity and $N$ are high
+        enough for the GPU to become the binding constraint, the benefit narrows to
+        17\% at $N=10\,000$ High, against roughly 59\% at $N=10\,000$ Low.
+  \item \textbf{Static Batching} beats GPU Instancing for low-poly objects but degrades
+        sharply with mesh complexity because of Unity's 65\,536-vertex combined-mesh
+        limit. At high-poly with $N=10\,000$ it gives almost no benefit over the
+        unoptimised Baseline and consumes 4.5$\times$ more memory.
+  \item Under \textbf{GPU-bound} conditions, all three modes converge toward comparable
+        wall-clock frame times, which confirms that draw-call optimisation pays off
+        only while the CPU is the bottleneck.
 \end{enumerate}
 
-For developers targeting Apple Silicon or similar tile-based GPU architectures,
-GPU Instancing is the recommended default optimisation for scenes with many
-identical objects.  Static Batching remains viable for low-poly-heavy scenes
-but must be evaluated against its memory cost and vertex-count scaling behaviour.
+For developers targeting Apple Silicon or other tile-based GPU architectures, GPU
+Instancing is the recommended default for scenes with many identical objects. Static
+Batching stays viable for low-poly-heavy scenes, but it has to be weighed against its
+memory cost and its vertex-count scaling behaviour.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \begin{thebibliography}{9}
 
-\bibitem{aras2011batch}
-A.~Pranckevi\v{c}ius,
-\textit{Batch, Batch, Batch: What Does It Really Mean?},
-Game Developers Conference (GDC), San Francisco, CA, 2011.
+  \bibitem{aras2011batch}
+  A.~Pranckevi\v{c}ius,
+  \textit{Batch, Batch, Batch: What Does It Really Mean?},
+  Game Developers Conference (GDC), San Francisco, CA, 2011.
 
-\bibitem{unitygpuinstancing}
-Unity Technologies,
-\textit{GPU Instancing},
-Unity Manual, 2022.
-[Online] Available: \url{https://docs.unity3d.com/Manual/GPUInstancing.html}
+  \bibitem{unitygpuinstancing}
+  Unity Technologies,
+  \textit{GPU Instancing},
+  Unity Manual, 2022.
+    [Online] Available: \url{https://docs.unity3d.com/Manual/GPUInstancing.html}
 
-\bibitem{unitybatching}
-Unity Technologies,
-\textit{Draw Call Batching},
-Unity Manual, 2022.
-[Online] Available: \url{https://docs.unity3d.com/Manual/DrawCallBatching.html}
+  \bibitem{unitybatching}
+  Unity Technologies,
+  \textit{Draw Call Batching},
+  Unity Manual, 2022.
+    [Online] Available: \url{https://docs.unity3d.com/Manual/DrawCallBatching.html}
 
-\bibitem{realtimerendering}
-T.~Akenine-M\"oller, E.~Haines, N.~Hoffman, A.~Pesce, M.~Iwanicki, and S.~Hillaire,
-\textit{Real-Time Rendering}, 4th~ed.
-Boca Raton, FL: CRC Press, 2018, ch.~18.
+  \bibitem{realtimerendering}
+  T.~Akenine-M\"oller, E.~Haines, N.~Hoffman, A.~Pesce, M.~Iwanicki, and S.~Hillaire,
+  \textit{Real-Time Rendering}, 4th~ed.
+  Boca Raton, FL: CRC Press, 2018, ch.~18.
 
-\bibitem{unityforum2019}
-Unity Technologies Community,
-\textit{Static Batching vs. GPU Instancing -- Memory and Performance Trade-offs},
-Unity Discussion Forums, 2019.
-[Online] Available:
-\url{https://discussions.unity.com/t/gpu-instancing-and-static-batching/712655}
+  \bibitem{unityforum2019}
+  Unity Technologies Community,
+  \textit{Static Batching vs. GPU Instancing -- Memory and Performance Trade-offs},
+  Unity Discussion Forums, 2019.
+    [Online] Available:
+  \url{https://discussions.unity.com/t/gpu-instancing-and-static-batching/712655}
 
-\bibitem{unitysrpbatcher}
-Unity Technologies,
-\textit{Optimizing Draw Calls: The SRP Batcher},
-Unity Blog, 2019.
-[Online] Available:
-\url{https://blog.unity.com/engine-platform/srp-batcher-speed-up-your-rendering}
+  \bibitem{unitysrpbatcher}
+  Unity Technologies,
+  \textit{Optimizing Draw Calls: The SRP Batcher},
+  Unity Blog, 2019.
+    [Online] Available:
+  \url{https://blog.unity.com/engine-platform/srp-batcher-speed-up-your-rendering}
 
 \end{thebibliography}
 
